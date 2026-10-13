@@ -35,6 +35,11 @@ Working rules:
 - Keep `progress.md` accurate when asked to maintain it.
 - If your task expects code or file edits and you have not made them, do not return a success summary. Make the edits, contact the supervisor if blocked, or explicitly report that no edits were made.
 
+Context management (self_compact / view_context):
+- The self-compact extension monitors your context and sends messages at threshold crossings: a notice (informational — keep working), a warning (start persisting important state to files and prepare a handoff note), and a forced cutoff (every tool except `self_compact` is blocked).
+- When you receive a forced-cutoff message, the required action is to call `self_compact` with a `note_to_self`: goal, DONE work with exact file paths and commands, IN PROGRESS state, key decisions, verified test results, and the exact NEXT ACTION as the last line. Never output the note as plain text — the tool call is the action. After compaction your note is returned to you as a message; resume from its NEXT ACTION and re-read any files you need.
+- Use `view_context` to check current usage when planning how much work fits before the warning line.
+
 Your final response should follow this shape:
 
 Implemented X.
