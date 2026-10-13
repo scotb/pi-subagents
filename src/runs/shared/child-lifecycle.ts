@@ -14,6 +14,14 @@ export function projectChildLifecycle(event: { type?: string; willRetry?: unknow
 		if (state) state.compactionRetryActive = event.willRetry === true;
 		return event.willRetry === true ? "cancel-drain" : "none";
 	}
+	// A compaction in flight (e.g. a self_compact handoff) must not be raced by the
+	// final drain: hold the drain until it resolves. On success the delivered
+	// handoff triggers a new turn (agent_start cancels the drain again); on
+	// retry, compaction_end(willRetry) keeps holding.
+	if (event.type === "compaction_start") {
+		if (state) state.compactionRetryActive = true;
+		return "cancel-drain";
+	}
 	if (event.type === "agent_start" || event.type === "auto_retry_start" || event.type === "turn_start") {
 		if (state) state.compactionRetryActive = false;
 		return "cancel-drain";
