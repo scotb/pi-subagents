@@ -2,7 +2,8 @@
 name: oracle
 aliases: advisor
 description: High-context decision-consistency oracle that protects inherited state and prevents drift
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, self_compact, view_context
+subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
 acceptanceRole: read-only
 thinking: high
 systemPromptMode: replace

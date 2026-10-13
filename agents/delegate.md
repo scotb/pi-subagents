@@ -3,7 +3,8 @@ name: delegate
 description: Lightweight subagent that inherits the parent model with no default reads
 systemPromptMode: append
 inheritProjectContext: true
-tools: read, grep, find, ls, bash, edit, write, contact_supervisor
+tools: read, grep, find, ls, bash, edit, write, contact_supervisor, self_compact, view_context
+subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
 inheritSkills: false
 ---
 

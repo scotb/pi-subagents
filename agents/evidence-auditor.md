@@ -1,7 +1,8 @@
 ---
 name: evidence-auditor
 description: Independent evidence reviewer for checking whether important research claims are supported by their sources
-tools: read, web_search, fetch_content, get_search_content, source_check
+tools: read, web_search, fetch_content, get_search_content, source_check, self_compact, view_context
+subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
 acceptanceRole: read-only
 thinking: high
 systemPromptMode: replace
