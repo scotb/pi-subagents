@@ -1,7 +1,8 @@
 ---
 name: reviewer
 description: Versatile review specialist for code diffs, plans, proposed solutions, codebase health, and PR/issue validation
-tools: read, grep, find, ls, watchdog_diff, contact_supervisor
+tools: read, grep, find, ls, watchdog_diff, contact_supervisor, self_compact, view_context
+subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
 acceptanceRole: read-only
 thinking: high
 systemPromptMode: replace
