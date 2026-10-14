@@ -53,6 +53,12 @@ export function projectChildLifecycle(event: { type?: string; willRetry?: unknow
 		if (state?.selfCompactPending) state.compactionRetryActive = true;
 		return state?.compactionRetryActive ? "none" : "start-drain";
 	}
-	if (terminalAssistantStop) return "start-drain";
+	if (terminalAssistantStop) {
+		// The self_compact handoff ends the turn with an assistant stop BEFORE
+		// the extension starts the compaction: adopt the pending flag so this
+		// stop cannot open the final drain window under an in-flight summary.
+		if (state?.selfCompactPending) state.compactionRetryActive = true;
+		return state?.compactionRetryActive ? "none" : "start-drain";
+	}
 	return "none";
 }
