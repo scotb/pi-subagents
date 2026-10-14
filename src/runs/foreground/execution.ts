@@ -764,7 +764,7 @@ async function runSingleAttempt(
 			}
 			if (action === "start-drain") startFinalDrain();
 		};
-		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
+		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false, selfCompactPending: false };
 
 		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
 			if (!options.allowIntercomDetach || sessionSettled) return;
@@ -1092,6 +1092,10 @@ async function runSingleAttempt(
 			updateActivityState(now);
 
 			if (evt.type === "tool_execution_start") {
+				// The self_compact handoff settles the agent before the extension
+				// starts the compaction; flag it so agent_settled cannot open the
+				// final drain window under the in-flight summary call.
+				if (evt.toolName === "self_compact") childLifecycleState.selfCompactPending = true;
 				const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
 					? evt.args as Record<string, unknown>
 					: {};
