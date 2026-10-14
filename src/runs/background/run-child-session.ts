@@ -205,7 +205,7 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
 		let abortSettleTimer: NodeJS.Timeout | undefined;
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
-		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
+		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false, selfCompactPending: false };
 		const timeoutMessage = () => input.timeoutMessage ?? SUBAGENT_TIMED_OUT_MESSAGE;
 		const stopMessage = () => input.stopMessage ?? SUBAGENT_STOPPED_MESSAGE;
 
@@ -478,6 +478,10 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 
 			if (event.type === "tool_execution_start" && event.toolName) {
 				toolCount += 1;
+				// The self_compact handoff settles the agent before the extension
+			// starts the compaction; flag it so agent_settled cannot open the
+		// final drain window under the in-flight summary call.
+				if (event.toolName === "self_compact") childLifecycleState.selfCompactPending = true;
 				const toolArgs = event.args && typeof event.args === "object" && !Array.isArray(event.args) ? event.args : {};
 				armToolTimeout({ toolCallId: event.toolCallId, toolName: event.toolName });
 				recordActiveToolCall({ toolCallId: event.toolCallId, toolName: event.toolName, args: toolArgs });
