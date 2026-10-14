@@ -40,9 +40,12 @@ export function projectChildLifecycle(event: { type?: string; willRetry?: unknow
 		return "cancel-drain";
 	}
 	if (event.type === "agent_end") {
+		// agent_end fires BETWEEN tool_execution_start and agent_settled in the
+		// self_compact turn. It must NOT clear selfCompactPending: agent_settled is
+		// the event that consumes the flag to hold the drain, and it arrives after
+		// agent_end. Clearing here is what made the gate fail on every run.
 		if (event.willRetry !== true && state) {
 			state.compactionRetryActive = false;
-			state.selfCompactPending = false;
 		}
 		return "cancel-drain";
 	}
