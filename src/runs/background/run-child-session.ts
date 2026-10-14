@@ -747,6 +747,17 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					applyChildLifecycle("cancel-drain");
 					await created.prompt(STRUCTURED_OUTPUT_FOLLOW_UP);
 				}
+				// A self_compact handoff starts its compaction from the extension's
+				// agent_settled handler, i.e. AFTER prompt() resolves. The child will
+				// continue with a new turn once the handoff is delivered, so settling
+				// now would dispose it mid-compaction (the same-second session_shutdown
+				// race). Skip the immediate settle; the drain lifecycle settles the
+				// child when its final agent_settled arrives with no compaction in
+				// flight (agentSettledReceived -> forcedDrainAfterFinalSuccess ->
+				// exitCode 0).
+				if (childLifecycleState.compactionRetryActive || childLifecycleState.selfCompactPending) {
+					return;
+				}
 				promptSettled = true;
 				settle(undefined);
 			} catch (promptError) {
