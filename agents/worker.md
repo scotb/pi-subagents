@@ -7,7 +7,7 @@ thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-tools: read, grep, find, ls, bash, edit, write, contact_supervisor, self_compact, view_context, /home/ubuntu/.pi/agent/extensions/self-compact
+tools: read, grep, find, ls, bash, edit, write, contact_supervisor, self_compact, view_context
 subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
 defaultContext: fresh
 defaultReads: context.md, plan.md
