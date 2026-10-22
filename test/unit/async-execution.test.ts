@@ -4,10 +4,51 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildAsyncRunnerSteps, assertClaudeCodeOverrideIsLocal, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerSteps, assertClaudeCodeOverrideIsLocal, DEFAULT_ASYNC_TIMEOUT_MS, emitProcessTerminalEvent, extendRecoveryResumeBudget, formatAsyncStartedMessage, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../src/shared/types.ts";
 import { registerRequiredChildExtensions } from "../../src/api/required-child-extensions.ts";
+
+describe("extendRecoveryResumeBudget", () => {
+	const NOW = 1_000_000;
+	const TEN_MIN = 10 * 60 * 1000;
+
+	it("respects an explicit fresh-spawn timeout under the recovery floor (regression: 120s must stay 120s)", () => {
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: false, timeoutMs: 120_000, now: NOW }), undefined);
+	});
+
+	it("respects any fresh-spawn timeout, including values above the floor", () => {
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: false, timeoutMs: TEN_MIN, now: NOW }), undefined);
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: false, timeoutMs: DEFAULT_ASYNC_TIMEOUT_MS, now: NOW }), undefined);
+	});
+
+	it("leaves an unset fresh-spawn timeout alone", () => {
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: false, timeoutMs: undefined, now: NOW }), undefined);
+	});
+
+	it("lifts a sub-floor resume remainder to the 10-minute floor", () => {
+		assert.deepEqual(extendRecoveryResumeBudget({ isRecoveryResume: true, timeoutMs: 5 * 60 * 1000, now: NOW }), {
+			deadlineAt: NOW + TEN_MIN,
+			timeoutMs: TEN_MIN,
+		});
+	});
+
+	it("grants a fresh 30-minute budget when the original deadline already elapsed", () => {
+		assert.deepEqual(extendRecoveryResumeBudget({ isRecoveryResume: true, timeoutMs: 0, now: NOW }), {
+			deadlineAt: NOW + DEFAULT_ASYNC_TIMEOUT_MS,
+			timeoutMs: DEFAULT_ASYNC_TIMEOUT_MS,
+		});
+		assert.deepEqual(extendRecoveryResumeBudget({ isRecoveryResume: true, timeoutMs: -1234, now: NOW }), {
+			deadlineAt: NOW + DEFAULT_ASYNC_TIMEOUT_MS,
+			timeoutMs: DEFAULT_ASYNC_TIMEOUT_MS,
+		});
+	});
+
+	it("leaves a healthy resume remainder untouched", () => {
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: true, timeoutMs: TEN_MIN, now: NOW }), undefined);
+		assert.equal(extendRecoveryResumeBudget({ isRecoveryResume: true, timeoutMs: DEFAULT_ASYNC_TIMEOUT_MS, now: NOW }), undefined);
+	});
+});
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"]): AgentConfig => ({
 	name,
