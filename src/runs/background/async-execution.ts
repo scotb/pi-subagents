@@ -193,6 +193,10 @@ interface AsyncExecutionContext {
 }
 
 export const DEFAULT_ASYNC_TIMEOUT_MS = 30 * 60 * 1000;
+/** Fresh budget granted to a recovery resume whose original deadline already elapsed. */
+export const RECOVERY_RESUME_BUDGET_MS = DEFAULT_ASYNC_TIMEOUT_MS;
+/** Minimum deadline a recovery resume gets: enough to cover a recovery compaction. */
+export const RECOVERY_RESUME_MIN_MS = 10 * 60 * 1000;
 
 interface AsyncChainParams {
 	chain: ChainStep[];
@@ -2037,11 +2041,21 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
-	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
+	let deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	let timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
-	if (timeoutMs !== undefined && timeoutMs <= 0) return formatAsyncStartError("single", "The source run's absolute deadline expired before recovery could launch.");
+	if (timeoutMs !== undefined && timeoutMs <= 0) {
+		// A recovery resume whose original deadline already elapsed gets a fresh
+		// budget: the resumed run owes a recovery compaction plus the remaining
+		// task, and the orchestrator only resumes converging runs.
+		deadlineAt = Date.now() + RECOVERY_RESUME_BUDGET_MS;
+		timeoutMs = RECOVERY_RESUME_BUDGET_MS;
+	} else if (timeoutMs !== undefined && timeoutMs < RECOVERY_RESUME_MIN_MS) {
+		// A sliver of the original deadline cannot cover a recovery compaction.
+		deadlineAt = Date.now() + RECOVERY_RESUME_MIN_MS;
+		timeoutMs = RECOVERY_RESUME_MIN_MS;
+	}
 	const resolvedToolTimeout = resolveToolTimeoutMs({
 		callValue: params.toolTimeoutMs,
 		agentValue: agentConfig.defaultToolTimeoutMs,

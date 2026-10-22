@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { it } from "node:test";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { runSync } from "../../src/runs/foreground/execution.ts";
@@ -303,3 +306,122 @@ for (const mode of ["foreground", "background"] as const) {
 		assert.equal(result.error, "Provider finish_reason: content_filter\nReply text: Blocked by the provider's usage policy.");
 	});
 }
+
+// Resume delivery gate: a reopened child (existing session file) may start a recovery
+// compaction immediately after session start. The task must not be delivered as a prompt
+// onto the locked session; it is re-routed to a queued follow-up instead.
+const fileLaunch = (sessionFile: string): InProcessChildLaunch => ({ session: {
+	cwd: process.cwd(), storage: { kind: "file", sessionFile }, extensionPaths: [], ambientExtensions: false,
+	hooks: [], noSkills: true, noContextFiles: true,
+	runtime: { fanoutChild: false, fast: false, depth: 1, waitTool: { enabled: false } },
+} } as InProcessChildLaunch);
+
+const resumeGateSessionFile = (prefix: string): string => {
+	const dir = mkdtempSync(join(tmpdir(), `pi-subagents-${prefix}-`));
+	const sessionFile = join(dir, "session.jsonl");
+	writeFileSync(sessionFile, "");
+	return sessionFile;
+};
+
+it("re-routes the resumed task to a follow-up when a recovery compaction starts", { timeout: 10_000 }, async () => {
+	let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
+	let subscribed: (() => void) | undefined;
+	const subscribedAt = new Promise<void>((resolve) => { subscribed = resolve; });
+	let promptCalled = false;
+	let followUpText: string | undefined;
+	const messages: ChildSession["messages"] = [];
+	const session: ChildSession = {
+		subscribe(handler) { listener = handler; subscribed?.(); return () => {}; },
+		async prompt() { promptCalled = true; },
+		async followUp(text) {
+			followUpText = text;
+			listener({ type: "compaction_end" });
+			listener({ type: "turn_start" });
+			const message = fauxAssistantMessage("Handoff complete.");
+			messages.push(message);
+			listener({ type: "message_end", message });
+			listener({ type: "agent_end", messages });
+			listener({ type: "agent_settled" });
+		},
+		async steer() {}, async abort() {}, async dispose() {},
+		messages, sessionId: "resume-gate-reroute-session", modelId: "mock/model",
+	};
+	const run = runChildSession({
+		factory: { create: async () => session, async dispose() {} },
+		launch: fileLaunch(resumeGateSessionFile("gate-reroute")),
+		prompt: "Finish the resumed task",
+		timeoutMessage: "timed out",
+		appendChildEvent() {}, writeOutputLine() {},
+	});
+	await subscribedAt;
+	listener({ type: "compaction_start" });
+	const result = await run;
+	assert.equal(promptCalled, false);
+	assert.equal(followUpText, "Finish the resumed task");
+	assert.equal(result.exitCode, 0);
+});
+
+it("delivers the resumed task as a prompt when no recovery compaction starts", { timeout: 15_000 }, async () => {
+	let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
+	let promptText: string | undefined;
+	const messages: ChildSession["messages"] = [];
+	const session: ChildSession = {
+		subscribe(handler) { listener = handler; return () => {}; },
+		async prompt(text) {
+			promptText = text;
+			const message = fauxAssistantMessage("Done.");
+			messages.push(message);
+			listener({ type: "message_end", message });
+			listener({ type: "agent_end", messages });
+			listener({ type: "agent_settled" });
+		},
+		async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+		messages, sessionId: "resume-gate-prompt-session", modelId: "mock/model",
+	};
+	const result = await runChildSession({
+		factory: { create: async () => session, async dispose() {} },
+		launch: fileLaunch(resumeGateSessionFile("gate-prompt")),
+		prompt: "Do the resumed work",
+		timeoutMessage: "timed out",
+		appendChildEvent() {}, writeOutputLine() {},
+	});
+	assert.equal(promptText, "Do the resumed work");
+	assert.equal(result.exitCode, 0);
+});
+
+it("defers a timeout kill until the recovery compaction ends", { timeout: 15_000 }, async () => {
+	let listener: Parameters<ChildSession["subscribe"]>[0] = () => {};
+	let subscribed: (() => void) | undefined;
+	const subscribedAt = new Promise<void>((resolve) => { subscribed = resolve; });
+	let timeout: (() => void) | undefined;
+	let releaseFollowUp!: () => void;
+	const followUpHung = new Promise<void>((resolve) => { releaseFollowUp = resolve; });
+	const session: ChildSession = {
+		subscribe(handler) { listener = handler; subscribed?.(); return () => {}; },
+		async prompt() {},
+		async followUp() { await followUpHung; },
+		async steer() {}, async abort() { releaseFollowUp(); }, async dispose() {},
+		messages: [], sessionId: "resume-gate-kill-session", modelId: "mock/model",
+	};
+	const run = runChildSession({
+		factory: { create: async () => session, async dispose() {} },
+		launch: fileLaunch(resumeGateSessionFile("gate-kill")),
+		prompt: "Resume",
+		timeoutMessage: "Subagent timed out.",
+		appendChildEvent() {}, writeOutputLine() {},
+		registerTimeout(handler) { timeout = handler; },
+	});
+	await subscribedAt;
+	listener({ type: "compaction_start" });
+	assert.ok(timeout, "runChildSession must register its timeout handler");
+	timeout!();
+	let settled = false;
+	const settleWatch = run.then(() => { settled = true; });
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	assert.equal(settled, false, "the kill must stay deferred while the compaction is in flight");
+	listener({ type: "compaction_end" });
+	const result = await run;
+	assert.equal(result.timedOut, true);
+	assert.equal(result.exitCode, 1);
+	void settleWatch;
+});
