@@ -5,6 +5,7 @@
  * interrupt, timeout, stop, and steer requests, and folds the run into the
  * step result the runner finalizes.
  */
+import fs from "node:fs";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { SUBAGENT_STOPPED_MESSAGE, SUBAGENT_TIMED_OUT_MESSAGE, assistantMessageError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
@@ -170,6 +171,13 @@ function omitUndefined<T extends object>(value: T): T {
 const FINAL_STOP_GRACE_MS = 1000;
 const HARD_FINISH_MS = 3000;
 const ABORT_SETTLE_MS = 3000;
+// A resumed child's self-compact extension starts its recovery compaction ~500ms
+// after session start when a handoff is pending/failed; the grace must outlast that.
+const RESUME_DELIVERY_GRACE_MS = 3000;
+const RESUME_DELIVERY_CAP_MS = 10 * 60 * 1000;
+const RESUME_COMPACTION_FAIL_GRACE_MS = 15000;
+// A deferred kill must not wait on a runaway compaction forever.
+const PENDING_KILL_CAP_MS = 10 * 60 * 1000;
 
 export function runChildSession(input: RunChildSessionInput): Promise<RunChildSessionResult> {
 	return new Promise((resolve) => {
@@ -204,6 +212,16 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 		let afterCompactionSettlement = false;
 		let terminalAgentEndReceived = false;
 		let compactionAfterFinalOpen = false;
+		let resumeCompactionObserved = false;
+		let resumeDeliveryHeld = false;
+		let resumeFollowUpPending = false;
+		let releaseResumeDelivery: ((mode: "prompt" | "follow-up" | "abort") => void) | undefined;
+		let resumeDelivery: Promise<"prompt" | "follow-up" | "abort"> | undefined;
+		let resumeDeliveryTimer: NodeJS.Timeout | undefined;
+		let resumeCapTimer: NodeJS.Timeout | undefined;
+		let resumeFailTimer: NodeJS.Timeout | undefined;
+		let pendingCompactionKill: (() => void) | undefined;
+		let pendingCompactionKillTimer: NodeJS.Timeout | undefined;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardFinishTimer: NodeJS.Timeout | undefined;
 		let watchdogTailTimer: NodeJS.Timeout | undefined;
@@ -273,6 +291,68 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			}
 		};
 
+		// Resume delivery gate: a resumed child's self-compact extension may start a
+		// recovery compaction right after session start (a pending/failed handoff
+		// locks every tool). Delivering the resume task as a prompt while the session
+		// is locked strands the model: every tool call is blocked until the
+		// compaction succeeds. Hold the prompt through the grace window; if a
+		// compaction starts, re-route the task to a queued follow-up so it lands
+		// after the handoff note is delivered, never on the locked session.
+		const armResumeDeliveryGate = (): void => {
+			resumeDeliveryHeld = true;
+			resumeDelivery = new Promise((resolve) => { releaseResumeDelivery = resolve; });
+			resumeDeliveryTimer = setTimeout(() => {
+				resumeDeliveryTimer = undefined;
+				if (resumeDeliveryHeld && !resumeCompactionObserved) {
+					resumeDeliveryHeld = false;
+					releaseResumeDelivery?.("prompt");
+				}
+			}, RESUME_DELIVERY_GRACE_MS);
+			resumeDeliveryTimer.unref?.();
+			resumeCapTimer = setTimeout(() => {
+				resumeCapTimer = undefined;
+				if (resumeDeliveryHeld) {
+					resumeDeliveryHeld = false;
+					releaseResumeDelivery?.("abort");
+				}
+			}, RESUME_DELIVERY_CAP_MS);
+			resumeCapTimer.unref?.();
+		};
+		const releaseResumeDeliveryAborted = (): void => {
+			if (resumeDeliveryHeld) {
+				resumeDeliveryHeld = false;
+				releaseResumeDelivery?.("abort");
+			}
+		};
+		// Drain-gate the kill paths: an interrupt/stop/timeout that lands while a
+		// compaction summary call is in flight would cancel it and leave the
+		// handoff failed with no recovery. Defer the kill until the compaction ends
+		// (or a turn takes over); a cap keeps a runaway compaction from blocking it.
+		const deferKillWhileCompacting = (action: () => void): boolean => {
+			if (!compactionStartedReceived || settled || promptSettled) return false;
+			pendingCompactionKill = action;
+			if (!pendingCompactionKillTimer) {
+				pendingCompactionKillTimer = setTimeout(() => {
+					pendingCompactionKillTimer = undefined;
+					const kill = pendingCompactionKill;
+					pendingCompactionKill = undefined;
+					if (kill && !settled && !promptSettled) kill();
+				}, PENDING_KILL_CAP_MS);
+				pendingCompactionKillTimer.unref?.();
+			}
+			return true;
+		};
+		const flushPendingCompactionKill = (): void => {
+			if (!pendingCompactionKill) return;
+			const kill = pendingCompactionKill;
+			pendingCompactionKill = undefined;
+			if (pendingCompactionKillTimer) {
+				clearTimeout(pendingCompactionKillTimer);
+				pendingCompactionKillTimer = undefined;
+			}
+			if (!settled && !promptSettled) kill();
+		};
+
 		const writeOutputText = (text: string) => {
 			for (const line of text.split("\n")) {
 				if (line.trim()) input.writeOutputLine(line);
@@ -334,6 +414,9 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				return;
 			}
 			if (promptSettled || finalDrainTimer || settled) return;
+			// A recovery compaction may still start, or a re-routed follow-up is owed;
+			// draining now would abort the child mid-compaction.
+			if (resumeDeliveryHeld || resumeFollowUpPending) return;
 			if (observeQueuedDrainHold()) return;
 			armFinalDrainTimer();
 		}
@@ -437,6 +520,13 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				compactionStartedReceived = true;
 				if (agentSettledReceived) afterCompactionSettlement = true;
 				if (terminalAgentEndReceived) compactionAfterFinalOpen = true;
+				if (resumeDeliveryHeld) {
+					// A recovery compaction is starting: re-route the resume task to a
+					// queued follow-up so it lands after the handoff note is delivered.
+					resumeCompactionObserved = true;
+					resumeDeliveryHeld = false;
+					releaseResumeDelivery?.("follow-up");
+				}
 			}
 			if (event.type === "compaction_end" && event.willRetry === true) {
 				compactionStartedReceived = false;
@@ -447,8 +537,33 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				clearFinalDrainTimers();
 				startFinalDrain();
 			}
+			if (event.type === "compaction_end" && event.willRetry !== true) {
+				// The summary call has settled (success or final failure); a deferred
+				// kill can no longer cancel in-flight compaction work.
+				flushPendingCompactionKill();
+				if (resumeCompactionObserved && !resumeFailTimer && !settled && !promptSettled) {
+					// A successful recovery compaction delivers the note and starts a new
+					// turn. If no turn arrives, the compaction failed and the session
+					// stays locked; settle with a diagnostic instead of holding forever.
+					resumeFailTimer = setTimeout(() => {
+						resumeFailTimer = undefined;
+						if (!settled && !promptSettled) {
+							error = "The recovery compaction did not settle before the resumed task could be delivered.";
+							abortChild();
+						}
+					}, RESUME_COMPACTION_FAIL_GRACE_MS);
+					resumeFailTimer.unref?.();
+				}
+			}
 			if (event.type === "turn_start" || event.type === "agent_start" || event.type === "auto_retry_start") {
 				queuedDrainHold = false;
+				resumeFollowUpPending = false;
+				if (resumeFailTimer) {
+					clearTimeout(resumeFailTimer);
+					resumeFailTimer = undefined;
+				}
+				// A turn has taken over; no summary call is in flight.
+				flushPendingCompactionKill();
 			}
 			if (event.type === "agent_start" || event.type === "auto_retry_start") {
 				compactionStartedReceived = false;
@@ -575,6 +690,22 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 				clearTimeout(abortSettleTimer);
 				abortSettleTimer = undefined;
 			}
+			if (resumeDeliveryTimer) {
+				clearTimeout(resumeDeliveryTimer);
+				resumeDeliveryTimer = undefined;
+			}
+			if (resumeCapTimer) {
+				clearTimeout(resumeCapTimer);
+				resumeCapTimer = undefined;
+			}
+			if (resumeFailTimer) {
+				clearTimeout(resumeFailTimer);
+				resumeFailTimer = undefined;
+			}
+			if (pendingCompactionKillTimer) {
+				clearTimeout(pendingCompactionKillTimer);
+				pendingCompactionKillTimer = undefined;
+			}
 			input.registerInterrupt?.(undefined);
 			input.registerTimeout?.(undefined);
 			input.registerStop?.(undefined);
@@ -674,14 +805,23 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 			if (settled || promptSettled || timedOut || stopped) return;
 			interrupted = true;
 			if (!error) error = "Interrupted. Waiting for explicit next action.";
+			releaseResumeDeliveryAborted();
+			if (deferKillWhileCompacting(() => abortChild())) return;
 			abortChild();
 		});
-		input.registerTimeout?.(() => terminateForTimeout(timeoutMessage()));
+		input.registerTimeout?.(() => {
+			releaseResumeDeliveryAborted();
+			const terminate = () => terminateForTimeout(timeoutMessage());
+			if (deferKillWhileCompacting(terminate)) return;
+			terminate();
+		});
 		input.registerStop?.(() => {
 			if (settled || promptSettled || timedOut || stopped) return;
 			stopped = true;
 			interrupted = false;
 			error = stopMessage();
+			releaseResumeDeliveryAborted();
+			if (deferKillWhileCompacting(() => abortChild())) return;
 			abortChild();
 		});
 
@@ -728,8 +868,38 @@ export function runChildSession(input: RunChildSessionInput): Promise<RunChildSe
 					}
 					return queued;
 				});
+				// A resumed launch reopens a session file that may carry a pending or
+				// failed self-compact handoff: the child's extension then starts a
+				// recovery compaction right after session start, locking every tool.
+				// Gate the prompt delivery so the resume task never lands on the
+				// locked session. Fresh launches have no handoff; deliver immediately.
+				const storage = input.launch.session.storage;
+				if (storage.kind === "file" && fs.existsSync(storage.sessionFile)) armResumeDeliveryGate();
 				if (interrupted || timedOut || stopped) abortChild();
 				messageBaseline = created.messages.length;
+				const deliveryMode = resumeDelivery ? await resumeDelivery : "prompt";
+				if (deliveryMode === "abort" || interrupted || timedOut || stopped) {
+					// A kill arrived (or the cap tripped) while the delivery gate held:
+					// settle through the abort backstop.
+					abortChild();
+					return;
+				}
+				if (deliveryMode === "follow-up") {
+					// The recovery compaction owns this session for now: queue the resume
+					// task as a follow-up so it lands after the handoff note is
+					// delivered. The queued message and drain hold keep the child alive
+					// through the follow-up turn; the run settles when that turn ends.
+					resumeFollowUpPending = true;
+					queuedDrainHold = true;
+					try {
+						await created.followUp(input.prompt);
+					} catch (followUpError) {
+						promptSettled = true;
+						settle(followUpError);
+						return;
+					}
+					return;
+				}
 				await created.prompt(input.prompt);
 				// A structured child that finished normally without calling structured_output gets one more turn (#2997).
 				if (input.launch.session.runtime.structuredOutput
