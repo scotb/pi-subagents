@@ -198,6 +198,30 @@ export const RECOVERY_RESUME_BUDGET_MS = DEFAULT_ASYNC_TIMEOUT_MS;
 /** Minimum deadline a recovery resume gets: enough to cover a recovery compaction. */
 export const RECOVERY_RESUME_MIN_MS = 10 * 60 * 1000;
 
+/**
+ * Budget extension for recovery resumes only. A resumed run carries the
+ * original absolute deadline; if the remainder is exhausted it gets a fresh
+ * budget (the run owes a recovery compaction plus the remaining task), and a
+ * remainder shorter than the floor is lifted to the floor. Fresh spawns pass
+ * isRecoveryResume=false and always get undefined: the caller's explicit
+ * timeoutMs must be respected, including values under the floor.
+ */
+export function extendRecoveryResumeBudget(params: {
+	isRecoveryResume: boolean;
+	timeoutMs: number | undefined;
+	now: number;
+}): { deadlineAt: number; timeoutMs: number } | undefined {
+	const { isRecoveryResume, timeoutMs, now } = params;
+	if (!isRecoveryResume || timeoutMs === undefined) return undefined;
+	if (timeoutMs <= 0) {
+		return { deadlineAt: now + RECOVERY_RESUME_BUDGET_MS, timeoutMs: RECOVERY_RESUME_BUDGET_MS };
+	}
+	if (timeoutMs < RECOVERY_RESUME_MIN_MS) {
+		return { deadlineAt: now + RECOVERY_RESUME_MIN_MS, timeoutMs: RECOVERY_RESUME_MIN_MS };
+	}
+	return undefined;
+}
+
 interface AsyncChainParams {
 	chain: ChainStep[];
 	task?: string;
@@ -2045,16 +2069,17 @@ export function executeAsyncSingle(
 	let timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
-	if (timeoutMs !== undefined && timeoutMs <= 0) {
-		// A recovery resume whose original deadline already elapsed gets a fresh
-		// budget: the resumed run owes a recovery compaction plus the remaining
-		// task, and the orchestrator only resumes converging runs.
-		deadlineAt = Date.now() + RECOVERY_RESUME_BUDGET_MS;
-		timeoutMs = RECOVERY_RESUME_BUDGET_MS;
-	} else if (timeoutMs !== undefined && timeoutMs < RECOVERY_RESUME_MIN_MS) {
-		// A sliver of the original deadline cannot cover a recovery compaction.
-		deadlineAt = Date.now() + RECOVERY_RESUME_MIN_MS;
-		timeoutMs = RECOVERY_RESUME_MIN_MS;
+	// Budget extension applies only to recovery resumes (which carry the
+	// original absolute deadline). Fresh spawns must respect the caller's
+	// explicit timeoutMs, including values under the recovery floor.
+	const recoveryBudget = extendRecoveryResumeBudget({
+		isRecoveryResume: params.absoluteDeadlineAt !== undefined,
+		timeoutMs,
+		now: Date.now(),
+	});
+	if (recoveryBudget) {
+		deadlineAt = recoveryBudget.deadlineAt;
+		timeoutMs = recoveryBudget.timeoutMs;
 	}
 	const resolvedToolTimeout = resolveToolTimeoutMs({
 		callValue: params.toolTimeoutMs,
