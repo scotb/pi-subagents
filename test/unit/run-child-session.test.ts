@@ -369,7 +369,7 @@ it("lets a compaction that runs after the final agent_end finish", { timeout: 10
 // Resume delivery gate: a reopened child (existing session file) may start a recovery
 // compaction immediately after session start. The task must not be delivered as a prompt
 // onto the locked session; it is re-routed to a queued follow-up instead.
-const fileLaunch = (sessionFile: string): InProcessChildLaunch => ({ session: {
+const fileLaunch = (sessionFile: string): InProcessChildLaunch => ({ capture: { finalDrainHeld: () => false }, session: {
 	cwd: process.cwd(), storage: { kind: "file", sessionFile }, extensionPaths: [], ambientExtensions: false,
 	hooks: [], noSkills: true, noContextFiles: true,
 	runtime: { fanoutChild: false, fast: false, depth: 1, waitTool: { enabled: false } },
