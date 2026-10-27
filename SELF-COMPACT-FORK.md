@@ -29,6 +29,44 @@ These are **not** regressions. Do not "fix" them by reverting the agent changes.
 fails in full-suite runs under CPU contention; passes in isolated runs on both the
 rebased and pre-rebase trees.
 
+## Environment-specific failures (not regressions)
+
+`test/unit/run-child-session.test.ts` does not run green in the pi-sandbox
+container (verified identical on pre- and post-rebase trees, 2026-10-27):
+
+- `settles a timed-out run whose session creation never returns` (upstream
+test) hangs and cancels the rest of the file: the run settles only through
+the unref'd 3s abort-backstop timer, and the isolated test process has
+nothing else keeping the event loop alive, so node exits first. Verified to
+fail identically on pure upstream v0.83.0 (`d9c5ca29`) — an upstream issue.
+- `delivers the resumed task as a prompt` and `defers a timeout kill` (fork
+tests) fail the same way on the pre-rebase tree (`45327ce1`) as on the
+rebased tree: their settle paths also rest on unref'd timers (resume
+delivery grace window / abort backstop).
+- `re-routes the resumed task to a follow-up` (fork test) passes in isolated
+runs.
+
+The `fileLaunch` test helper was missing the `capture` key required by the
+current launch API (TypeError in `armFinalDrainTimer`); fixed in `49c81936`.
+
+These are environment artifacts (isolated node:test process + unref'd
+timers), not regressions. Do not chase them when rebasing.
+
+## Rebase log
+
+- 2026-10-20: rebased onto v0.79.2 (`7927cf21`). The 4 known failures were
+  verified identical.
+- 2026-10-27: rebased onto v0.83.0 (`d9c5ca29`) from fork point `7927cf21`.
+  Two conflict stops, both resolved by keeping both sides:
+  - `581cb057`: upstream structured-output follow-up block (#2997) + fork
+    self-compact settle-skip guard in the prompt-resolution path — both
+    kept, upstream block first.
+  - `f93d0e11`: state vars, `compaction_start` handler, `compaction_end`
+    handler (two separate `if` blocks), and the test file (upstream
+    `runFinalReply` tests + fork resume-gate tests) — all kept.
+  Follow-up: `49c81936` test-helper fix (`capture` on `fileLaunch`).
+  Typecheck passes; the 4 known failures verified identical.
+
 ## Rebase checklist
 
 1. `git tag backup/self-compact-pre-rebase-<date> HEAD`
