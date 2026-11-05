@@ -66,6 +66,16 @@ timers), not regressions. Do not chase them when rebasing.
     `runFinalReply` tests + fork resume-gate tests) — all kept.
   Follow-up: `49c81936` test-helper fix (`capture` on `fileLaunch`).
   Typecheck passes; the 4 known failures verified identical.
+- 2026-11-05: rebased onto pi 1.5.0 (upstream main `0cfc8ff1`) from fork
+  point `d9c5ca29`. No conflict stops — all 11 fork commits applied
+  cleanly. Follow-up: devDeps bumped (`@earendil-works/pi-*` 1.2.0 →
+  1.5.0). Note: the first typecheck after the devDep bump showed ~17
+  errors — all caused by stale **nested** `pi-ai`/`pi-agent-core`/`pi-tui`
+  0.87.0 copies orphaned in `node_modules/@earendil-works/pi-coding-agent/
+  node_modules` by the previous install (class-identity mismatches). Fixed
+  with `rm -rf node_modules && npm ci`; typecheck then passed clean
+  against pi 1.5.0 with no source changes. The 4 known by-design failures
+  (6 subtests) verified identical.
 
 ## Rebase checklist
 
