@@ -52,6 +52,17 @@ current launch API (TypeError in `armFinalDrainTimer`); fixed in `49c81936`.
 These are environment artifacts (isolated node:test process + unref'd
 timers), not regressions. Do not chase them when rebasing.
 
+`test/unit/extension-module-preload.test.ts` (upstream test, added after the
+fork point; the fork does not touch `src/extension/index.ts` or this test)
+fails in the pi-sandbox container (node v22.23.3, verified 2026-11-05): under
+`t.mock.timers`, the tick fires the 1s preload timer but the async dynamic
+`import()` inside the callback cannot resolve within the synchronous tick, so
+`executorLoaded()` is still false at the assertion. It also stalls the
+full-suite parallel run (all other files complete); in isolation it finishes
+in seconds with the single assertion failure. Same category as above:
+upstream/environment artifact, not a fork regression. When running the full
+suite in this container, expect this one additional failure.
+
 ## Rebase log
 
 - 2026-10-20: rebased onto v0.79.2 (`7927cf21`). The 4 known failures were
