@@ -87,6 +87,20 @@ suite in this container, expect this one additional failure.
   with `rm -rf node_modules && npm ci`; typecheck then passed clean
   against pi 1.5.0 with no source changes. The 4 known by-design failures
   (6 subtests) verified identical.
+- 2026-11-19: rebased onto v0.88.0 (upstream main `c99503ae`) from fork
+  point `0cfc8ff1`. No conflict stops — all 14 fork commits applied
+  cleanly. Note: the initial rebase attempt used `d9c5ca29` as the fork
+  point, which replayed 66 upstream commits and conflicted immediately in
+  `docs/configuration.md` — aborted and redone from the true fork point
+  (`git merge-base upstream/main self-compact` = `0cfc8ff1`). Content diff
+  of the patch series: SHAs plus one context line in the `ab3c47ca` patch
+  (upstream replaced `updateActivityState(now)` with
+  `pauseForSupervisorWait(timeoutTimer, evt)` in #3246/#3248) — fork's own
+  lines byte-identical. Follow-up: devDeps bumped (`@earendil-works/pi-*`
+  1.5.0 → 1.5.2) to match running pi 1.5.2, clean `node_modules` reinstall
+  (lockfile regenerated first — `npm ci` refuses a stale lock). Typecheck
+  passes; the 4 known by-design failures (6 subtests) verified identical
+  against 1.5.2.
 
 ## Rebase checklist
 
