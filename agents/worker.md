@@ -8,7 +8,7 @@ systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
 tools: read, grep, find, ls, bash, edit, write, contact_supervisor, self_compact, view_context
-subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact
+subagentOnlyExtensions: /home/ubuntu/.pi/agent/extensions/self-compact, /home/ubuntu/.pi/agent/extensions/tdd-ledger
 defaultContext: fresh
 defaultReads: context.md, plan.md
 defaultProgress: true
