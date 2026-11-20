@@ -135,3 +135,17 @@ Verification (detached worktree, 1.6.0 deps): typecheck PASS. Baseline
 files: the 4 known by-design failures identical;
 `child-session-queued.test.ts` 2 subtests fail — verified identical on
 1.5.2 (pre-existing/environment, not a 1.6.0 regression).
+
+## Rebase onto upstream main 6a1ce6d8 (v0.89.1) — 2026-11-20
+
+Fork point `c99503ae` (v0.88.0). All 18 fork commits applied cleanly —
+zero conflict stops. Upstream delta: 33 commits (incl. #3304 process-proof
+settlement fix, #3305). Content diff of the patch series: SHAs only —
+no fork content lost. Post-rebase head: `410ac704` (1.6.0 compatibility
+commit on top). DevDeps remain 1.6.0, `overrides: {"undici": "8.12.4"}`
+intact. Typecheck PASS; the 4 known by-design failures verified identical
+(agent-frontmatter 28 ok, agent-management/agent-overrides/default-
+extensions file-level failures). Backup tag:
+`backup/self-compact-pre-rebase-2026-11-20`. Pushes: user runs
+`git push --force-with-lease origin self-compact` and
+`git push origin main`.
