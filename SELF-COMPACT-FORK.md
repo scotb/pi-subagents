@@ -112,3 +112,26 @@ suite in this container, expect this one additional failure.
    stripped of index/@@ headers) to confirm the fork commits survived intact
 6. Dev mode: restart the container with `--dev`, smoke-test a worker child
    (it should list `self_compact` and `view_context` among its tools)
+
+## Pi 1.6.0 compatibility (2026-11-20)
+
+Not a rebase — no upstream rebase performed (upstream main `6a1ce6d` not
+incorporated). Compatibility commit for Pi 1.6.0 (v1.6.0 tag
+`faac5858`), prepared and verified against a detached 1.6.0 worktree
+before landing on `self-compact`:
+
+1. devDeps `@earendil-works/pi-*` 1.5.2 → 1.6.0.
+2. `overrides: {"undici": "$undici"}` → `{"undici": "8.12.4"}`. The
+   reference form breaks npm arborist on the 1.6.0 tree ("Unable to
+   resolve reference $undici" — the 1.6.0 peer set no longer resolves
+   the reference). Verified: 1.6.0 tree installs cleanly with the
+   concrete pin.
+3. Two type fixes — the 1.6.0 TUI API made `Component.render` return
+   `readonly string[]`: `src/extension/index.ts` (slash-result
+   container) and `src/tui/render.ts` (`capCompactMainWindowResult`)
+   render annotations `string[]` → `readonly string[]`.
+
+Verification (detached worktree, 1.6.0 deps): typecheck PASS. Baseline
+files: the 4 known by-design failures identical;
+`child-session-queued.test.ts` 2 subtests fail — verified identical on
+1.5.2 (pre-existing/environment, not a 1.6.0 regression).
