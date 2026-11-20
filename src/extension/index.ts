@@ -207,7 +207,7 @@ function createSlashResultComponent(
 	const container = new Container();
 	let lastVersion = -1;
 	let lastTheme: ExtensionContext["ui"]["theme"] | undefined;
-	container.render = (width: number) => {
+	container.render = (width: number): readonly string[] => {
 		const snapshot = getSlashRenderableSnapshot(details);
 		const currentTheme = getCurrentTheme();
 		if (snapshot.version !== lastVersion || currentTheme !== lastTheme || isSlashResultRunning(snapshot.result)) {

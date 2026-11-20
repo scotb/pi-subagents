@@ -111,10 +111,10 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
-    "@earendil-works/pi-agent-core": "1.5.2",
-    "@earendil-works/pi-ai": "1.5.2",
-    "@earendil-works/pi-coding-agent": "1.5.2",
-    "@earendil-works/pi-tui": "1.5.2",
+    "@earendil-works/pi-agent-core": "1.6.0",
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-tui": "1.6.0",
     "@oxlint/plugins": "1.80.0",
     "@types/node": "24.13.3",
     "esbuild": "0.28.2",
@@ -123,6 +123,6 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "undici": "$undici"
+    "undici": "8.12.4"
   }
 }
