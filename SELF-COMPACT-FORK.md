@@ -149,3 +149,25 @@ extensions file-level failures). Backup tag:
 `backup/self-compact-pre-rebase-2026-11-20`. Pushes: user runs
 `git push --force-with-lease origin self-compact` and
 `git push origin main`.
+- 2026-11-28: rebased onto upstream main `1613d5ed` from fork point
+  `6a1ce6d8` (v0.89.1). 19 commits, 3 conflict stops:
+  - `51dafb19` (test/unit/async-execution.test.ts): import list — kept the
+    fork side (adds `extendRecoveryResumeBudget`); the removed upstream line
+    now contains `executeAsyncSingle` (upstream-added) in the new base.
+  - `24524da2` (package.json + package-lock.json): 1.5.0 devDeps bump —
+    took the fork side in both (lockfile conflict stripped, fork side kept).
+  - `410ac704` (src/extension/index.ts + src/tui/render.ts): readonly
+    `string[]` render annotations — kept the fork side.
+  Content diff of the patch series: SHAs plus the expected import-line
+  context — no fork content lost. Follow-up: devDeps bumped
+  `@earendil-works/pi-*` 1.6.0 → 1.7.0, `overrides: {"undici": "8.12.4"}`
+  verified intact (clean `npm install` against 1.7.0 — the concrete pin
+  still resolves). Typecheck PASS against 1.7.0 with no source changes.
+  The 4 known by-design failures verified identical (agent-frontmatter
+  95/94, agent-management 70/69, agent-overrides 64/63, default-extensions
+  9/6); extension-module-preload 1 env assertion; run-child-session env
+  failures (unref'd timers); await-async-run 13/13 isolated. Backup tag:
+  `backup/self-compact-pre-rebase-2026-11-28`. Pi main head at build time:
+  `356d346e` (9 commits past the v1.7.0 tag). Pushes: user runs
+  `git push --force-with-lease origin self-compact` and
+  `git push origin main`.
